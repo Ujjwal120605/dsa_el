@@ -34,18 +34,24 @@ st.set_page_config(
 )
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-EMOTIONS = ["neutral", "happy", "sad", "angry"]
+EMOTIONS = ["neutral", "happy", "sad", "angry", "fearful", "disgusted", "surprised"]
 EMOTION_EMOJI = {
-    "neutral": "😐",
-    "happy":   "😄",
-    "sad":     "😢",
-    "angry":   "😠",
+    "neutral":   "😐",
+    "happy":     "😄",
+    "sad":       "😢",
+    "angry":     "😠",
+    "fearful":   "😨",
+    "disgusted": "🤢",
+    "surprised": "😲",
 }
 EMOTION_COLOR = {
-    "neutral": "#8ecae6",
-    "happy":   "#f9c74f",
-    "sad":     "#577590",
-    "angry":   "#f94144",
+    "neutral":   "#8ecae6",
+    "happy":     "#f9c74f",
+    "sad":       "#577590",
+    "angry":     "#f94144",
+    "fearful":   "#a8dadc",
+    "disgusted": "#6a994e",
+    "surprised": "#f8961e",
 }
 EMPATHETIC_RESPONSES = {
     "neutral": [
@@ -67,6 +73,21 @@ EMPATHETIC_RESPONSES = {
         "I understand you're frustrated. Let's work through this together.",
         "It's okay to feel angry. Take a breath — I'm listening.",
         "Your feelings are valid. How can I help resolve this?",
+    ],
+    "fearful": [
+        "You're safe here. Take a deep breath — everything will be okay. 💪",
+        "Fear is natural. Let's tackle this step by step.",
+        "I'm here with you. What's on your mind?",
+    ],
+    "disgusted": [
+        "That sounds really unpleasant. I'm sorry you're experiencing that.",
+        "Your reaction makes complete sense. Let me help.",
+        "Ugh, that does sound terrible! How can I make things better?",
+    ],
+    "surprised": [
+        "Oh wow, sounds like something unexpected happened! Tell me more!",
+        "What a surprise! Life keeps us on our toes, doesn't it?",
+        "That must have been quite a shock! I'm all ears.",
     ],
 }
 
@@ -252,99 +273,47 @@ def load_model():
         return None, None, None, None
 
 
-# ── Feature extraction (must match train_model.py) ────────────────────────────
+# ── Feature extraction (matches the original trained model — 130 features) ────
 def extract_features(audio: np.ndarray, sr: int = 22050) -> np.ndarray:
-    feats = []
+    features = []
     mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=40)
-    d1   = librosa.feature.delta(mfcc, order=1)
-    d2   = librosa.feature.delta(mfcc, order=2)
-    for mat in (mfcc, d1, d2):
-        feats.extend(np.mean(mat, axis=1).tolist())
-        feats.extend(np.std(mat,  axis=1).tolist())
+    features.extend(np.mean(mfcc, axis=1).tolist())
+    features.extend(np.std(mfcc, axis=1).tolist())
     chroma = librosa.feature.chroma_stft(y=audio, sr=sr)
-    feats.extend(np.mean(chroma, axis=1).tolist())
-    feats.extend(np.std(chroma,  axis=1).tolist())
-    mel = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=128)
-    feats.append(float(np.mean(mel)))
-    feats.append(float(np.std(mel)))
-    sc = librosa.feature.spectral_contrast(y=audio, sr=sr, n_bands=6)
-    feats.extend(np.mean(sc, axis=1).tolist())
-    feats.extend(np.std(sc,  axis=1).tolist())
+    features.extend(np.mean(chroma, axis=1).tolist())
+    features.extend(np.std(chroma, axis=1).tolist())
+    mel = librosa.feature.melspectrogram(y=audio, sr=sr)
+    features.append(float(np.mean(mel)))
+    features.append(float(np.std(mel)))
     zcr = librosa.feature.zero_crossing_rate(audio)
-    feats.append(float(np.mean(zcr)))
-    feats.append(float(np.std(zcr)))
+    features.append(float(np.mean(zcr)))
+    features.append(float(np.std(zcr)))
     rms = librosa.feature.rms(y=audio)
-    feats.append(float(np.mean(rms)))
-    feats.append(float(np.std(rms)))
-    feats.append(float(np.max(rms)))
-    for fn in (
-        librosa.feature.spectral_centroid,
-        librosa.feature.spectral_bandwidth,
-        librosa.feature.spectral_rolloff,
-    ):
-        arr = fn(y=audio, sr=sr)
-        feats.append(float(np.mean(arr)))
-        feats.append(float(np.std(arr)))
-    flat = librosa.feature.spectral_flatness(y=audio)
-    feats.append(float(np.mean(flat)))
-    feats.append(float(np.std(flat)))
+    features.append(float(np.mean(rms)))
+    features.append(float(np.std(rms)))
+    sc = librosa.feature.spectral_centroid(y=audio, sr=sr)
+    features.append(float(np.mean(sc)))
+    features.append(float(np.std(sc)))
+    sb = librosa.feature.spectral_bandwidth(y=audio, sr=sr)
+    features.append(float(np.mean(sb)))
+    features.append(float(np.std(sb)))
+    sr_feat = librosa.feature.spectral_rolloff(y=audio, sr=sr)
+    features.append(float(np.mean(sr_feat)))
+    features.append(float(np.std(sr_feat)))
     try:
-        harm = librosa.effects.harmonic(audio)
-        tonn = librosa.feature.tonnetz(y=harm, sr=sr)
-        feats.extend(np.mean(tonn, axis=1).tolist())
-        feats.extend(np.std(tonn,  axis=1).tolist())
+        tonnetz = librosa.feature.tonnetz(y=librosa.effects.harmonic(audio), sr=sr)
+        features.extend(np.mean(tonnetz, axis=1).tolist())
+        features.extend(np.std(tonnetz, axis=1).tolist())
     except Exception:
-        feats.extend([0.0] * 12)
+        features.extend([0.0] * 12)
     try:
-        f0, voiced_flag, _ = librosa.pyin(
-            audio, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7")
-        )
-        if f0 is None:
-            raise ValueError
-        f0_clean = f0[~np.isnan(f0)]
-        voiced_ratio = float(np.mean(voiced_flag)) if voiced_flag is not None else 0.0
-        if len(f0_clean) > 0:
-            feats.append(float(np.mean(f0_clean)))
-            feats.append(float(np.std(f0_clean)))
-            feats.append(float(np.ptp(f0_clean)))
-        else:
-            feats.extend([0.0, 0.0, 0.0])
-        feats.append(voiced_ratio)
+        f0, _, _ = librosa.pyin(audio, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"))
+        f0_clean = f0[~np.isnan(f0)] if f0 is not None else np.array([0.0])
+        features.append(float(np.mean(f0_clean)) if len(f0_clean) > 0 else 0.0)
+        features.append(float(np.std(f0_clean)) if len(f0_clean) > 0 else 0.0)
     except Exception:
-        feats.extend([0.0, 0.0, 0.0, 0.0])
-    try:
-        f0_jitter, _, _ = librosa.pyin(
-            audio, fmin=librosa.note_to_hz("C2"), fmax=librosa.note_to_hz("C7"),
-            frame_length=512,
-        )
-        f0j = f0_jitter[~np.isnan(f0_jitter)] if f0_jitter is not None else np.array([0.0])
-        jitter = float(np.mean(np.abs(np.diff(f0j)) / (np.mean(f0j) + 1e-9))) if len(f0j) > 1 else 0.0
-        feats.append(jitter)
-    except Exception:
-        feats.append(0.0)
-    rms_arr = librosa.feature.rms(y=audio)[0]
-    shimmer = float(np.mean(np.abs(np.diff(rms_arr)) / (np.mean(rms_arr) + 1e-9)))
-    feats.append(shimmer)
-    try:
-        stft = np.abs(librosa.stft(audio))
-        pcen = librosa.pcen(stft * (2 ** 31), sr=sr)
-        feats.append(float(np.mean(pcen)))
-        feats.append(float(np.std(pcen)))
-    except Exception:
-        feats.extend([0.0, 0.0])
-    bands = [(85, 255), (255, 900), (900, 2800), (2800, 5000)]
-    stft_mag = np.abs(librosa.stft(audio, n_fft=2048))
-    freqs    = librosa.fft_frequencies(sr=sr, n_fft=2048)
-    for flo, fhi in bands:
-        idx = np.where((freqs >= flo) & (freqs < fhi))[0]
-        feats.append(float(np.mean(stft_mag[idx, :])) if len(idx) > 0 else 0.0)
-    try:
-        tempo, beats = librosa.beat.beat_track(y=audio, sr=sr)
-        feats.append(float(tempo))
-        feats.append(float(np.std(np.diff(beats))) if len(beats) > 1 else 0.0)
-    except Exception:
-        feats.extend([0.0, 0.0])
-    return np.array(feats, dtype=np.float32)
+        features.extend([0.0, 0.0])
+    return np.array(features, dtype=np.float32)
 
 
 def predict_emotion(audio: np.ndarray, sr: int, pipe, le):
@@ -420,7 +389,7 @@ def plot_probability_bars(probs: dict):
 
 
 def plot_confusion_matrix(cm, classes):
-    fig, ax = plt.subplots(figsize=(6, 5))
+    fig, ax = plt.subplots(figsize=(8, 7))
     fig.patch.set_facecolor("#161b22"); ax.set_facecolor("#161b22")
     cmap = LinearSegmentedColormap.from_list("cm", ["#0d1117", "#1f6feb", "#58a6ff"])
     im   = ax.imshow(cm, interpolation="nearest", cmap=cmap)
@@ -445,10 +414,13 @@ def plot_confusion_matrix(cm, classes):
 def gen_demo_audio(emotion: str, sr: int = 22050, dur: float = 2.5) -> np.ndarray:
     t = np.linspace(0, dur, int(sr * dur), endpoint=False)
     params = dict(
-        neutral=(220, .05, .5, 0),
-        happy=  (400, .04, .7, 6),
-        sad=    (150, .02, .3, 1),
-        angry=  (300, .20, .9, 3),
+        neutral=  (220, .05, .5,  0),
+        happy=    (400, .04, .7,  6),
+        sad=      (150, .02, .3,  1),
+        angry=    (300, .20, .9,  3),
+        fearful=  (280, .10, .5, 10),
+        disgusted=(180, .08, .35, 2),
+        surprised=(500, .06, .8,  8),
     )
     freq, noise, amp, vib = params.get(emotion, params["neutral"])
     a = amp * np.sin(2 * np.pi * freq * t)
