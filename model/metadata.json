@@ -1,0 +1,16 @@
+{
+  "accuracy": 1.0,
+  "emotions": [
+    "neutral",
+    "happy",
+    "sad",
+    "angry",
+    "fearful",
+    "disgusted",
+    "surprised"
+  ],
+  "feature_dim": 130,
+  "n_train": 1400,
+  "n_test": 350,
+  "model_type": "Ensemble (RF + GBM + SVM)"
+}
