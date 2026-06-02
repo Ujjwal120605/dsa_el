@@ -44,12 +44,15 @@ from sklearn.metrics import (
 from sklearn.calibration import CalibratedClassifierCV
 
 # ── Emotion labels ──────────────────────────────────────────────────────────
-EMOTIONS = ["neutral", "happy", "sad", "angry"]
+EMOTIONS = ["neutral", "happy", "sad", "angry", "fearful", "disgusted", "surprised"]
 EMOTION_EMOJI = {
-    "neutral": "😐",
-    "happy":   "😄",
-    "sad":     "😢",
-    "angry":   "😠",
+    "neutral":   "😐",
+    "happy":     "😄",
+    "sad":       "😢",
+    "angry":     "😠",
+    "fearful":   "😨",
+    "disgusted": "🤢",
+    "surprised": "😲",
 }
 
 SR = 22050  # default sample rate
@@ -194,11 +197,14 @@ def extract_features(audio: np.ndarray, sr: int = SR) -> np.ndarray:
 # ══════════════════════════════════════════════════════════════════════════════
 
 _EMOTION_PARAMS = {
-    #          freq  noise  amp   vib_rate  vib_depth  harmonics              env_shape
-    "neutral": (220,  0.03, 0.50, 0,        0.00,      [1.0, 0.4, 0.2, 0.1], "flat"),
-    "happy":   (380,  0.03, 0.72, 6,        0.03,      [1.0, 0.6, 0.4, 0.2], "bouncy"),
-    "sad":     (140,  0.02, 0.28, 1.5,      0.01,      [1.0, 0.3, 0.1, 0.05],"decay"),
-    "angry":   (290,  0.25, 0.92, 4,        0.02,      [1.0, 0.9, 0.7, 0.5], "attack"),
+    #             freq  noise  amp   vib_rate  vib_depth  harmonics              env_shape
+    "neutral":   (220,  0.03, 0.50, 0,        0.00,      [1.0, 0.4, 0.2, 0.1], "flat"),
+    "happy":     (380,  0.03, 0.72, 6,        0.03,      [1.0, 0.6, 0.4, 0.2], "bouncy"),
+    "sad":       (140,  0.02, 0.28, 1.5,      0.01,      [1.0, 0.3, 0.1, 0.05],"decay"),
+    "angry":     (290,  0.25, 0.92, 4,        0.02,      [1.0, 0.9, 0.7, 0.5], "attack"),
+    "fearful":   (280,  0.12, 0.48, 12,       0.04,      [1.0, 0.5, 0.3, 0.15],"tremolo"),
+    "disgusted": (175,  0.09, 0.33, 2,        0.015,     [1.0, 0.7, 0.5, 0.3], "irregular"),
+    "surprised": (520,  0.05, 0.82, 9,        0.035,     [1.0, 0.5, 0.3, 0.2], "burst"),
 }
 
 
@@ -212,6 +218,15 @@ def _make_envelope(shape: str, n: int, rng: np.random.Generator) -> np.ndarray:
         env = np.exp(-3 * t) + 0.1
     elif shape == "attack":
         env = np.clip(20 * t, 0, 1) * (1 - 0.3 * t)
+    elif shape == "tremolo":
+        env = np.abs(0.5 + 0.5 * np.sin(2 * np.pi * 8 * t))
+    elif shape == "irregular":
+        env = 0.5 + 0.4 * rng.random(n)
+    elif shape == "burst":
+        env = np.zeros(n)
+        burst_start = int(n * 0.1)
+        env[burst_start:] = np.exp(-4 * t[burst_start:])
+        env[:burst_start] = np.linspace(0, 1, burst_start)
     else:
         env = np.ones(n)
     return env.astype(np.float32)
@@ -239,10 +254,13 @@ def _synth_emotion_audio(
     audio *= amp
 
     formant_freqs = {
-        "neutral": [730,  1090, 2440],
-        "happy":   [800,  1200, 2600],
-        "sad":     [600,   900, 2200],
-        "angry":   [750,  1300, 2800],
+        "neutral":   [730,  1090, 2440],
+        "happy":     [800,  1200, 2600],
+        "sad":       [600,   900, 2200],
+        "angry":     [750,  1300, 2800],
+        "fearful":   [700,  1050, 2400],
+        "disgusted": [650,   950, 2300],
+        "surprised": [820,  1350, 2900],
     }
     for ff in formant_freqs.get(emotion, [730, 1090, 2440]):
         bw = 80 + 40 * rng.random()
